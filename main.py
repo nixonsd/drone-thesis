@@ -1,17 +1,751 @@
-from config import config
-from data.dataset import load_data
-from models.cnn_model import CNNModel
-from navigation.slam import Localization
+import pygame
+import math
+import sympy
+import numpy as np
+from models.lidar_simulator import simulate_lidar
+from models.ekf import ExtendedKalmanFilter
 
-def main():
-    # Ініціалізація та запуск основних компонентів
-    data = load_data(config.DATA_PATH)
-    model = CNNModel()
-    localization = Localization()
+# Initialize Pygame
+pygame.init()
 
-    # Приклад використання
-    model.train(data)
-    localization.start()
+# Screen dimensions
+WIDTH, HEIGHT = 800, 600
+screen = pygame.display.set_mode((WIDTH, HEIGHT))
+pygame.display.set_caption("Player Movement with SLAM")
 
-if __name__ == "__main__":
-    main()
+# Colors
+WHITE = (255, 255, 255)
+BLACK = (0, 0, 0)
+BLUE = (0, 0, 255)
+RED = (255, 0, 0)
+GREEN = (0, 255, 0)
+
+# Clock for controlling the frame rate
+clock = pygame.time.Clock()
+FPS = 60
+
+# Player settings
+player_size = 40
+player_x, player_y = 0, 0  # Initial position
+player_angle = 0  # Initial angle
+player_speed = 5  # Movement speed
+rotation_speed = 5  # Rotation speed
+
+# LiDAR settings
+lidar_range = 200  # LiDAR detection range
+lidar_fov = 90  # Field of view in degrees
+obstacles = [(300, 300), (400, 500), (700, 100), (500, 300)]  # Predefined obstacles
+
+# EKF initialization
+state_dim = 3 + 2 * len(obstacles)  # [x, y, theta] + [x_1, y_1, ...]
+initial_state = np.zeros((state_dim, 1))  # Initialize all to zero
+meas_dim = 2 * len(obstacles)  # [distance, angle] for each obstacle
+ekf = ExtendedKalmanFilter(state_dim, meas_dim)
+ekf.set_process_noise(np.diag([0.5] * state_dim))  # Process noise for all states
+ekf.set_measurement_noise(np.diag([1.0] * meas_dim))  # Measurement noise for all measurements
+
+
+meas_dim = 2 * len(obstacles)  # [distance, angle] for each obstacle
+ekf = ExtendedKalmanFilter(state_dim, meas_dim)
+ekf.set_process_noise(np.diag([0.5] * state_dim))  # Process noise for all states
+ekf.set_measurement_noise(np.diag([1.0] * meas_dim))  # Measurement noise for all measurements
+
+
+# Add obstacle positions to EKF state vector
+for i, (obs_x, obs_y) in enumerate(obstacles):
+  initial_state[3 + 2 * i, 0] = obs_x
+  initial_state[3 + 2 * i + 1, 0] = obs_y
+
+import math
+
+def get_object_position(robot_x, robot_y, robot_angle, r, theta):
+  """
+  Calculate the global position of an object based on the robot's position, orientation, and lidar readings.
+
+  :param robot_x: Robot's global x-coordinate
+  :param robot_y: Robot's global y-coordinate
+  :param robot_angle: Robot's global orientation (in radians)
+  :param r: Distance to the object from the robot
+  :param theta: Angle to the object from the robot (in radians, relative to robot's orientation)
+  :return: Tuple (x_global, y_global) representing the global coordinates of the object
+  """
+  # Incorporate the robot's orientation into the angle
+  absolute_angle = theta + robot_angle
+
+  # Calculate the relative Cartesian coordinates
+  x_relative = r * math.cos(absolute_angle)
+  y_relative = r * math.sin(absolute_angle)
+
+  # Calculate the global coordinates
+  x_global = robot_x + x_relative
+  y_global = robot_y + y_relative
+
+  return x_global, y_global
+
+def process_lidar_detections(robot_x, robot_y, robot_angle, lidar_detections):
+  """
+  Process lidar detections and return a flattened list of global positions.
+
+  :param robot_x: Robot's global x-coordinate
+  :param robot_y: Robot's global y-coordinate
+  :param robot_angle: Robot's global orientation (in radians)
+  :param lidar_detections: List of tuples [(r1, theta1), (r2, theta2), ...] in radians
+  :return: Flattened list of global coordinates [x1, y1, x2, y2, ...]
+  """
+  obstacle_coordinates = []
+  for detection in lidar_detections:
+    r, theta = detection
+    # Use the corrected get_object_position function
+    x_global, y_global = get_object_position(robot_x, robot_y, robot_angle, r, theta)
+    obstacle_coordinates.extend([x_global, y_global])
+  return obstacle_coordinates
+
+def find_closest_obstacles(detected_coordinates, known_obstacles, threshold=50.0):
+  """
+  Associate LiDAR detections with known obstacles.
+
+  :param detected_coordinates: List of detected obstacle coordinates [x1, y1, x2, y2, ...].
+  :param known_obstacles: List of known obstacles [[x1, y1], [x2, y2], ...].
+  :param threshold: Maximum distance to consider a match (default = 50.0).
+  :return: List of associated obstacles [(det_x, det_y, matched_obstacle_index), ...].
+  """
+  associated_obstacles = []
+  for i in range(0, len(detected_coordinates), 2):
+    det_x, det_y = detected_coordinates[i], detected_coordinates[i + 1]
+    closest_idx = None
+    min_distance = float('inf')
+
+    for idx, (obs_x, obs_y) in enumerate(known_obstacles):
+      distance = np.sqrt((det_x - obs_x) ** 2 + (det_y - obs_y) ** 2)
+      if distance < min_distance and distance <= threshold:
+        min_distance = distance
+        closest_idx = idx
+
+    if closest_idx is not None:
+      associated_obstacles.append((det_x, det_y, closest_idx))
+  return associated_obstacles
+
+# def motion_model(state, u):
+#   x, y, theta = state[0, 0], state[1, 0], state[2, 0]
+#   dx, dy, dtheta = u
+#   theta_rad = np.radians(theta + dtheta)
+#   x_next = x + dx * np.cos(theta_rad)
+#   y_next = y + dy * np.sin(theta_rad)
+#   theta_next = theta + dtheta
+#   # Obstacles remain unchanged
+#   next_state = state.copy()
+#   next_state[0, 0] = x_next
+#   next_state[1, 0] = y_next
+#   next_state[2, 0] = theta_next
+#   return next_state
+
+def motion_model(state, u):
+  """
+  Motion model for EKF. Supports both symbolic and numerical computations.
+
+  :param state: Current state vector (symbolic or numeric)
+  :param u: Control input vector [dx, dy, dtheta]
+  :return: Next state vector
+  """
+  x, y, theta = state[0, 0], state[1, 0], state[2, 0]
+  dx, dy, dtheta = u
+
+  # Handle symbolic computation (if inputs are symbolic)
+  if hasattr(x, 'is_symbol') or hasattr(y, 'is_symbol'):
+    theta_rad = (theta + dtheta) * sympy.pi / 180  # Convert to radians for symbolic computation
+    x_next = x + dx * sympy.cos(theta_rad)
+    y_next = y + dy * sympy.sin(theta_rad)
+    theta_next = theta + dtheta
+  else:
+    # Numerical computation
+    theta_rad = np.radians(theta + dtheta)
+    x_next = x + dx * np.cos(theta_rad)
+    y_next = y + dy * np.sin(theta_rad)
+    theta_next = theta + dtheta
+
+  # Obstacles remain unchanged
+  next_state = state.copy()
+  next_state[0, 0] = x_next
+  next_state[1, 0] = y_next
+  next_state[2, 0] = theta_next
+  return next_state
+
+
+
+# def measurement_model(state):
+#   # Assume the LiDAR detects distances and angles relative to the player's position
+#   x, y, theta = state[0, 0], state[1, 0], state[2, 0]
+#   measurements = []
+#   for i in range(len(obstacles)):
+#     obs_x = state[3 + 2 * i, 0]
+#     obs_y = state[3 + 2 * i + 1, 0]
+#     distance = math.sqrt((obs_x - x) ** 2 + (obs_y - y) ** 2)
+#     angle = math.degrees(math.atan2(obs_y - y, obs_x - x)) - theta
+#     measurements.append([distance, angle])
+#   return np.array(measurements).flatten()
+
+def measurement_model(state):
+  x, y, theta = state[0, 0], state[1, 0], state[2, 0]
+  measurements = []
+
+  for i in range(len(obstacles)):
+    obs_x = state[3 + 2 * i, 0]
+    obs_y = state[3 + 2 * i + 1, 0]
+
+    if hasattr(x, 'is_symbol') or hasattr(y, 'is_symbol'):
+      # Symbolic computation
+      distance = sympy.sqrt((obs_x - x)**2 + (obs_y - y)**2)
+      angle = sympy.atan2(obs_y - y, obs_x - x) - theta
+    else:
+      # Numerical computation
+      distance = math.sqrt((obs_x - x)**2 + (obs_y - y)**2)
+      angle = math.atan2(obs_y - y, obs_x - x) - theta
+
+    measurements.extend([distance, angle])
+
+  return np.array(measurements).reshape((-1, 1))  # Return as column vector
+
+# Game loop
+running = True
+while running:
+  for event in pygame.event.get():
+    if event.type == pygame.QUIT:
+      running = False
+  
+  # Key states for movement
+  keys = pygame.key.get_pressed()
+  if keys[pygame.K_UP]:
+    player_x += player_speed * math.cos(player_angle)
+    player_y += player_speed * math.sin(player_angle)
+  if keys[pygame.K_DOWN]:
+    player_x -= player_speed * math.cos(player_angle)
+    player_y -= player_speed * math.sin(player_angle)
+  if keys[pygame.K_LEFT]:
+    player_angle -= math.radians(rotation_speed)  # Convert rotation speed to radians
+  if keys[pygame.K_RIGHT]:
+    player_angle += math.radians(rotation_speed)  # Convert rotation speed to radians
+
+  # Normalize angle to [-π, π]
+  player_angle = (player_angle + math.pi) % (2 * math.pi) - math.pi
+
+  # # SLAM: Prediction and Update
+  # state = np.array([player_x, player_y, player_angle] + [coord for obstacle in obstacles for coord in obstacle]).reshape((-1, 1))
+  # ekf.predict(lambda s, u: motion_model(state, [0, 0, 0]))
+
+  # # Simulate LiDAR
+  # lidar_detections = simulate_lidar(player_x, player_y, player_angle, obstacles, lidar_range, lidar_fov)  
+  # obstacle_coordinates = process_lidar_detections(player_x, player_y, lidar_detections)
+  
+  # print(obstacle_coordinates)
+  
+  # SLAM: Prediction
+  ekf.predict(lambda s, u: motion_model(s, [0, 0, 0]))
+
+  # Simulate LiDAR
+  lidar_detections = simulate_lidar(player_x, player_y, player_angle, obstacles, lidar_range, lidar_fov)
+  # Process LiDAR detections
+  obstacle_coordinates = process_lidar_detections(player_x, player_y, player_angle, lidar_detections)
+
+  print(obstacle_coordinates)
+  
+  # # SLAM: Prediction and Update
+  # state = np.array([player_x, player_y, player_angle] + [coord for obstacle in obstacles for coord in obstacle]).reshape((-1, 1))
+  # ekf.predict(lambda s, u: motion_model(state, [0, 0, 0]))
+
+  # lidar_detections = simulate_lidar(player_x, player_y, player_angle, obstacles, lidar_range, lidar_fov)
+  # if lidar_detections:
+  #   # Flatten lidar detections into a single column vector
+  #   z = np.array([val for detection in lidar_detections for val in detection]).reshape((-1, 1))
+  #   ekf.update(z, measurement_model)
+
+
+  # SLAM: Prediction and Update
+  # state = np.array([player_x, player_y, player_angle] + [coord for obstacle in obstacles for coord in obstacle]).reshape((-1, 1))
+  # ekf.predict(lambda s, u: motion_model(state, [0, 0, 0]))
+
+  # Simulate LiDAR
+  # lidar_detections = simulate_lidar(player_x, player_y, player_angle, obstacles, lidar_range, lidar_fov)
+
+  # # Construct z as a 2D column vector
+  # z = np.array([[distance, angle] for distance, angle in lidar_detections]).flatten().reshape((-1, 1))
+
+  # # Update EKF
+  # ekf.update(z, measurement_model)
+
+  # Clear screen
+  screen.fill(WHITE)
+
+  # Draw player as a square
+  half_size = player_size // 2
+  corners = [
+    (
+      player_x + half_size * math.cos(player_angle) - half_size * math.sin(player_angle),
+      player_y + half_size * math.sin(player_angle) + half_size * math.cos(player_angle),
+    ),
+    (
+      player_x - half_size * math.cos(player_angle) - half_size * math.sin(player_angle),
+      player_y - half_size * math.sin(player_angle) + half_size * math.cos(player_angle),
+    ),
+    (
+      player_x - half_size * math.cos(player_angle) + half_size * math.sin(player_angle),
+      player_y - half_size * math.sin(player_angle) - half_size * math.cos(player_angle),
+    ),
+    (
+      player_x + half_size * math.cos(player_angle) + half_size * math.sin(player_angle),
+      player_y + half_size * math.sin(player_angle) - half_size * math.cos(player_angle),
+    ),
+  ]
+  pygame.draw.polygon(screen, BLUE, corners)
+
+  # Draw obstacles
+  for obstacle in obstacles:
+    pygame.draw.circle(screen, RED, obstacle, 10)
+
+  # Draw LiDAR detections
+  for detection in lidar_detections:
+    distance, angle = detection
+    # Use angle directly as it is already in radians
+    end_x = player_x + distance * math.cos(player_angle + angle)
+    end_y = player_y + distance * math.sin(player_angle + angle)
+    pygame.draw.line(screen, GREEN, (player_x, player_y), (end_x, end_y), 2)
+
+  # Display SLAM state
+  font = pygame.font.Font(None, 36)
+  slam_text = font.render(f"SLAM State: x={player_x:.2f}, y={player_y:.2f}, angle={math.degrees(player_angle):.2f}", True, BLACK)
+  screen.blit(slam_text, (10, 10))
+
+  # Update display
+  pygame.display.flip()
+  clock.tick(FPS)
+
+pygame.quit()
+
+
+# import pygame
+# import numpy as np
+# from models.slam import SLAM
+
+# # Initialize Pygame
+# pygame.init()
+
+# # Screen dimensions
+# WIDTH, HEIGHT = 800, 600
+# screen = pygame.display.set_mode((WIDTH, HEIGHT))
+# pygame.display.set_caption("SLAM Game")
+
+# # Colors
+# WHITE = (255, 255, 255)
+# BLACK = (0, 0, 0)
+# BLUE = (0, 0, 255)
+# RED = (255, 0, 0)
+# GREEN = (0, 255, 0)
+
+# # Clock for controlling the frame rate
+# clock = pygame.time.Clock()
+# FPS = 60
+
+# # Player settings
+# player_size = 40
+# player_x, player_y = WIDTH // 2, HEIGHT // 2  # Initial position
+# player_angle = 0  # Initial angle
+# player_speed = 5  # Movement speed
+# rotation_speed = 5  # Rotation speed
+
+# # LiDAR settings
+# lidar_range = 200  # LiDAR detection range
+# lidar_fov = 90  # Field of view in degrees
+# obstacles = [(300, 300), (400, 500), (700, 100), (500, 300)]  # Predefined obstacles
+
+# # Initialize SLAM
+# player_pos = [player_x, player_y, np.radians(player_angle)]
+# process_noise = np.diag([0.1] * (3 + 2 * len(obstacles)))
+# measurement_noise = np.diag([0.5, 0.1] * len(obstacles))
+# slam = SLAM(player_pos, obstacles, process_noise, measurement_noise)
+
+# # Game loop
+# running = True
+# while running:
+#   # Event handling
+#   for event in pygame.event.get():
+#     if event.type == pygame.QUIT:
+#       running = False
+
+#   # Key states
+#   keys = pygame.key.get_pressed()
+
+#   # Control inputs [dx, dy, dtheta]
+#   dx = player_speed * (keys[pygame.K_UP] - keys[pygame.K_DOWN])
+#   dtheta = np.radians(rotation_speed * (keys[pygame.K_RIGHT] - keys[pygame.K_LEFT]))
+#   control = [dx, 0, dtheta]
+
+#   # Perform SLAM prediction step
+#   slam.predict(control)
+
+  # Simulate LiDAR sensor
+  # lidar_measurements = []
+  # for obstacle in obstacles:
+  #   dx = obstacle[0] - player_x
+  #   dy = obstacle[1] - player_y
+  #   distance = np.sqrt(dx**2 + dy**2)
+  #   angle = np.degrees(np.arctan2(dy, dx)) - player_angle
+  #   angle = (angle + 180) % 360 - 180  # Normalize angle to [-180, 180]
+  #   if distance <= lidar_range and abs(angle) <= lidar_fov / 2:
+  #     lidar_measurements.append((distance, angle))
+
+  # Perform SLAM update step
+  # if lidar_measurements:
+  #   slam.update(lidar_measurements)
+
+  # # Get updated SLAM state
+  # state = slam.get_state()
+  # player_estimated_x, player_estimated_y, player_estimated_theta = state[0, 0], state[1, 0], state[2, 0]
+  # estimated_obstacles = [
+  #   (state[3 + 2 * i, 0], state[3 + 2 * i + 1, 0]) for i in range(len(obstacles))
+  # ]
+
+#   # Clear screen
+#   screen.fill(WHITE)
+
+#   # Draw player
+#   half_size = player_size // 2
+#   angle_rad = np.radians(player_angle)
+#   corners = [
+#     (
+#       player_x + half_size * np.cos(angle_rad) - half_size * np.sin(angle_rad),
+#       player_y + half_size * np.sin(angle_rad) + half_size * np.cos(angle_rad),
+#     ),
+#     (
+#       player_x - half_size * np.cos(angle_rad) - half_size * np.sin(angle_rad),
+#       player_y - half_size * np.sin(angle_rad) + half_size * np.cos(angle_rad),
+#     ),
+#     (
+#       player_x - half_size * np.cos(angle_rad) + half_size * np.sin(angle_rad),
+#       player_y - half_size * np.sin(angle_rad) - half_size * np.cos(angle_rad),
+#     ),
+#     (
+#       player_x + half_size * np.cos(angle_rad) + half_size * np.sin(angle_rad),
+#       player_y + half_size * np.sin(angle_rad) - half_size * np.cos(angle_rad),
+#     ),
+#   ]
+#   pygame.draw.polygon(screen, BLUE, corners)
+
+#   # Draw real obstacles
+#   for obstacle in obstacles:
+#     pygame.draw.circle(screen, RED, obstacle, 10)
+
+#   # Draw estimated obstacles
+#   # for est_obstacle in estimated_obstacles:
+#   #   pygame.draw.circle(screen, GREEN, (int(est_obstacle[0]), int(est_obstacle[1])), 5)
+
+#   # Display SLAM state and measurements
+#   font = pygame.font.Font(None, 36)
+#   # slam_text = font.render(f"SLAM Player Pos: [{player_estimated_x:.2f}, {player_estimated_y:.2f}, {np.degrees(player_estimated_theta):.2f}°]", True, BLACK)
+#   # screen.blit(slam_text, (10, 10))
+
+#   lidar_text = font.render(f"LiDAR Detections: {len(lidar_measurements)}", True, BLACK)
+#   screen.blit(lidar_text, (10, 50))
+
+#   # Update display
+#   pygame.display.flip()
+
+#   # Cap the frame rate
+#   clock.tick(FPS)
+
+# pygame.quit()
+
+
+
+# import pygame
+# import math
+# from models.lidar_simulator import simulate_lidar
+
+# # Initialize Pygame
+# pygame.init()
+
+# # Screen dimensions
+# WIDTH, HEIGHT = 800, 600
+# screen = pygame.display.set_mode((WIDTH, HEIGHT))
+# pygame.display.set_caption("Player Square Movement with LiDAR Sensor")
+
+# # Colors
+# WHITE = (255, 255, 255)
+# BLACK = (0, 0, 0)
+# BLUE = (0, 0, 255)
+# RED = (255, 0, 0)
+# GREEN = (0, 255, 0)
+
+# # Clock for controlling the frame rate
+# clock = pygame.time.Clock()
+# FPS = 60
+
+# # Player settings
+# player_size = 40
+# player_x, player_y = WIDTH // 2, HEIGHT // 2  # Initial position
+# player_angle = 0  # Initial angle
+# player_speed = 5  # Movement speed
+# rotation_speed = 5  # Rotation speed
+
+# # LiDAR settings
+# lidar_range = 200  # LiDAR detection range
+# lidar_fov = 90  # Field of view in degrees
+# obstacles = [(300, 300), (400, 500), (700, 100), (500, 300)]  # Predefined obstacles
+
+# # Game loop
+# running = True
+
+# while running:
+#   # Event handling
+#   for event in pygame.event.get():
+#     if event.type == pygame.QUIT:
+#       running = False
+
+#   # Key states
+#   keys = pygame.key.get_pressed()
+
+#   # Control array [x, y, angle]
+#   control_array = [player_x, player_y, player_angle]
+
+#   # Movement and rotation logic
+#   if keys[pygame.K_UP]:
+#     player_x += player_speed * math.cos(math.radians(player_angle))
+#     player_y += player_speed * math.sin(math.radians(player_angle))
+#   if keys[pygame.K_DOWN]:
+#     player_x -= player_speed * math.cos(math.radians(player_angle))
+#     player_y -= player_speed * math.sin(math.radians(player_angle))
+#   if keys[pygame.K_LEFT]:
+#     player_angle -= rotation_speed
+#   if keys[pygame.K_RIGHT]:
+#     player_angle += rotation_speed
+
+#   # Normalize angle to keep it between 0 and 360
+#   player_angle %= 360
+#   control_array = [round(player_x, 2), round(player_y, 2), round(player_angle, 2)]
+
+#   # Clear screen
+#   screen.fill(WHITE)
+
+#   # Draw player
+#   half_size = player_size // 2
+#   angle_rad = math.radians(player_angle)
+#   corners = [
+#     (
+#       player_x + half_size * math.cos(angle_rad) - half_size * math.sin(angle_rad),
+#       player_y + half_size * math.sin(angle_rad) + half_size * math.cos(angle_rad),
+#     ),
+#     (
+#       player_x - half_size * math.cos(angle_rad) - half_size * math.sin(angle_rad),
+#       player_y - half_size * math.sin(angle_rad) + half_size * math.cos(angle_rad),
+#     ),
+#     (
+#       player_x - half_size * math.cos(angle_rad) + half_size * math.sin(angle_rad),
+#       player_y - half_size * math.sin(angle_rad) - half_size * math.cos(angle_rad),
+#     ),
+#     (
+#       player_x + half_size * math.cos(angle_rad) + half_size * math.sin(angle_rad),
+#       player_y + half_size * math.sin(angle_rad) - half_size * math.cos(angle_rad),
+#     ),
+#   ]
+#   pygame.draw.polygon(screen, BLUE, corners)
+
+#   # Draw obstacles
+#   for obstacle in obstacles:
+#     pygame.draw.circle(screen, RED, obstacle, 10)
+
+#   # Simulate LiDAR
+#   lidar_detections = simulate_lidar(player_x, player_y, player_angle, obstacles, lidar_range, lidar_fov)
+
+#   # Draw LiDAR detections
+#   for detection in lidar_detections:
+#     distance, angle = detection
+#     end_x = player_x + distance * math.cos(math.radians(player_angle + angle))
+#     end_y = player_y + distance * math.sin(math.radians(player_angle + angle))
+#     pygame.draw.line(screen, GREEN, (player_x, player_y), (end_x, end_y), 2)
+
+#   # Display the control array and lidar data
+#   font = pygame.font.Font(None, 36)
+#   control_text = font.render(f"Control Array: {control_array}", True, BLACK)
+#   screen.blit(control_text, (10, 10))
+
+#   lidar_text = font.render(f"LiDAR: {len(lidar_detections)} detections", True, BLACK)
+#   screen.blit(lidar_text, (10, 50))
+
+#   # Update the display
+#   pygame.display.flip()
+
+#   # Cap the frame rate
+#   clock.tick(FPS)
+
+# pygame.quit()
+
+# import numpy as np
+# from models.ekf import ExtendedKalmanFilter
+
+# # Define time step
+# dt = 1.0  # 1 second
+
+# sigma = 0.5
+
+# initial_state = np.array([0, 0])  # assume x
+# control_inputs = np.array([[1, 0], [1, 0], [1, 0]])  # assume speed
+
+# def add_noise(data, sigma):
+#     """
+#     Add Gaussian noise to the data to simulate sensor noise.
+#     Handles both scalar and iterable data.
+#     """
+#     if np.isscalar(data):  # Check if the input is a scalar (float or int)
+#         noise = np.random.normal(0, sigma)
+#         return data + noise
+#     else:  # Handle iterable data (e.g., list or numpy array)
+#         noise = np.random.normal(0, sigma, size=len(data))
+#         return data + noise
+
+# def f(state, control_input):
+#     return np.array([state[0] + dt * control_input[0], 0])
+
+# def h(state):
+#     return state
+
+# # Initialize the EKF
+# ekf = ExtendedKalmanFilter(state_dim=2, meas_dim=2, initial_state=initial_state)
+
+# # Define process and measurement noise covariances
+# ekf.set_process_noise(np.eye(2) * 0.01)  # Small process noise
+# ekf.set_measurement_noise(np.eye(2) * sigma)  # Moderate measurement noise
+
+# # Create the array of measurements
+# measurements = np.array([[add_noise(i, sigma), 0] for i in range(1, 4)])
+
+# # Run EKF for three time steps
+# for k, (z, u) in enumerate(zip(measurements, control_inputs)):
+#     print(f"\nTime Step {k+1}:")
+    
+#     # Predict step
+#     ekf.predict(f, u=u)
+#     print("Predicted State:")
+#     print(ekf.get_state())
+#     print("Predicted Covariance:")
+#     print(ekf.get_covariance())
+
+#     # Update step with measurement
+#     ekf.update(z, h)  # Pass `z` directly; it's already a 1D array
+#     print("Updated State:")
+#     print(ekf.get_state())
+#     print("Updated Covariance:")
+#     print(ekf.get_covariance())
+
+# import numpy as np
+# from models.ekf import ExtendedKalmanFilter
+
+# # Define time step
+# dt = 1.0  # 1 second
+
+# sigma = 0.5
+
+# initial_state = np.array([0, 0]) # assume x
+# control_inputs = np.array([[1, 0], [1, 0], [1, 0]]) # assume speed
+
+# def add_noise(data, sigma):
+#     """
+#     Add Gaussian noise to the data to simulate sensor noise.
+#     Handles both scalar and iterable data.
+#     """
+#     if np.isscalar(data):  # Check if the input is a scalar (float or int)
+#         noise = np.random.normal(0, sigma)
+#         return data + noise
+#     else:  # Handle iterable data (e.g., list or numpy array)
+#         noise = np.random.normal(0, sigma, size=len(data))
+#         return data + noise
+
+# def f(state, control_input):
+#     return np.array([state[0] + dt * control_input[0], 0])
+
+# def h(state):
+#     return state
+
+# # Initialize the EKF
+# ekf = ExtendedKalmanFilter(state_dim=2, meas_dim=2, initial_state=initial_state)
+
+# # Define process and measurement noise covariances
+# ekf.set_process_noise(np.eye(2) * 0.001)  # Small process noise
+# ekf.set_measurement_noise(np.eye(2) * sigma)             # Moderate measurement noise
+
+# # # Initialize the covariance matrix
+# # ekf.P = np.array([[1, 0], [0, 1]])  # Initial uncertainty
+
+# # measurements = [add_noise(x, sigma) for x in np.arange(1, 4, 1)]
+
+# # Create the array of measurements
+# measurements = np.array([[add_noise(i, sigma), 0] for i in range(1, 3)])
+
+# # Run EKF for three time steps
+# for k, (z, u) in enumerate(zip(measurements, control_inputs)):
+#     print(f"\nTime Step {k+1}:")
+    
+#     # Predict step
+#     ekf.predict(f, u=u)
+#     print("Predicted State:")
+#     print(ekf.get_state())
+#     print("Predicted Covariance:")
+#     print(ekf.get_covariance())
+
+#     # Update step with measurement
+#     z = np.array([z, 0])  # Convert measurement to column vector
+#     ekf.update(z, h)
+#     print("Updated State:")
+#     print(ekf.get_state())
+#     print("Updated Covariance:")
+#     print(ekf.get_covariance())
+
+# # State transition function
+# def f(state, control_input):
+#     print('state', state)
+#     """
+#     State transition function.
+#     x_next = [x + v * dt, v]
+#     """
+#     x, v = state[0, 0], state[1, 0]
+#     v_control = control_input[0, 0] if control_input is not None else v
+#     return np.array([[x + v_control * dt], [v_control]])
+
+# # Measurement function
+# def h(state):
+#     """
+#     Measurement function.
+#     Measures position (x) only.
+#     """
+#     x, _ = state
+#     return np.array([[x]])
+
+# # Initialize the EKF
+# ekf = ExtendedKalmanFilter(state_dim=2, meas_dim=1, initial_state=np.array([[0], [0]]))  # Starting at x=0, v=0
+
+# # Define process and measurement noise covariances
+# ekf.set_process_noise(np.array([[0.01, 0], [0, 0.01]]))  # Small process noise
+# ekf.set_measurement_noise(np.array([[0.1]]))             # Moderate measurement noise
+
+# # Initialize the covariance matrix
+# ekf.P = np.array([[1, 0], [0, 1]])  # Initial uncertainty
+
+# # Simulated measurements (position only, with some noise)
+# measurements = [1.1, 2.2, 3.1]
+# control_inputs = [np.array([[1]]), np.array([[1]]), np.array([[1]])]  # Constant velocity control input
+
+# # Run EKF for three time steps
+# for k, (z, u) in enumerate(zip(measurements, control_inputs)):
+#     print(f"\nTime Step {k+1}:")
+    
+#     # Predict step
+#     ekf.predict(f, u=u)
+#     print("Predicted State:")
+#     print(ekf.get_state())
+#     print("Predicted Covariance:")
+#     print(ekf.get_covariance())
+    
+#     # Update step with measurement
+#     z = np.array([[z]])  # Convert measurement to column vector
+#     ekf.update(z, h)
+#     print("Updated State:")
+#     print(ekf.get_state())
+#     print("Updated Covariance:")
+#     print(ekf.get_covariance())
