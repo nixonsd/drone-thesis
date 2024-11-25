@@ -86,6 +86,37 @@ class ExtendedKalmanFilter:
         # Update the covariance estimate
         self.P = (np.eye(self.state_dim) - K @ self.H) @ self.P
 
+    def add_dimension(self, initial_value, process_noise=1.0, measurement_noise=None):
+        """
+        Adds new dimensions for obstacles to the state vector and updates associated matrices.
+        :param initial_value: List or array of initial values for the new state dimensions.
+        Can be a flattened list [x1, y1, x2, y2, ...] or a single [x, y].
+        :param process_noise: Process noise for the new dimensions.
+        :param measurement_noise: Measurement noise for the new dimensions (optional).
+        """
+        # Ensure initial_value is a numpy array and reshape to (n, 1)
+        initial_value = np.array(initial_value).reshape(-1, 1)
+
+        # Update state dimension
+        self.state_dim += initial_value.shape[0]
+
+        # Expand state vector
+        self.x = np.vstack([self.x, initial_value])
+
+        # Expand state covariance matrix
+        self.P = np.pad(self.P, ((0, initial_value.shape[0]), (0, initial_value.shape[0])), mode='constant', constant_values=0)
+        np.fill_diagonal(self.P[-initial_value.shape[0]:, -initial_value.shape[0]:], process_noise)
+
+        # Expand process noise covariance matrix
+        self.Q = np.pad(self.Q, ((0, initial_value.shape[0]), (0, initial_value.shape[0])), mode='constant', constant_values=0)
+        np.fill_diagonal(self.Q[-initial_value.shape[0]:, -initial_value.shape[0]:], process_noise)
+
+        # Expand measurement noise covariance matrix if required
+        if measurement_noise is not None:
+            self.meas_dim += initial_value.shape[0]
+            self.R = np.pad(self.R, ((0, initial_value.shape[0]), (0, initial_value.shape[0])), mode='constant', constant_values=0)
+            np.fill_diagonal(self.R[-initial_value.shape[0]:, -initial_value.shape[0]:], measurement_noise)
+
     def set_process_noise(self, Q):
         """
         Sets the process noise covariance matrix.
