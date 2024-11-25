@@ -1,7 +1,8 @@
 import pygame
 
-# Screen dimensions
+# Screen settings
 WIDTH, HEIGHT = 800, 600
+FPS = 60
 
 # Colors
 WHITE = (255, 255, 255)
@@ -10,20 +11,23 @@ BLUE = (0, 0, 255)
 RED = (255, 0, 0)
 GREEN = (0, 255, 0)
 
-# Clock settings
-FPS = 60
-
 # Player settings
 PLAYER_SIZE = 40
-PLAYER_SPEED = 5
-ROTATION_SPEED = 5
+PLAYER_SPEED = 5  # Units per frame
+ROTATION_SPEED = 5  # Degrees per frame
+PLAYER_PROCESS_NOISE = [0.5, 0.5, 0.05]  # [x_noise, y_noise, angle_noise]
 
 # LiDAR settings
-LIDAR_RANGE = 200
-LIDAR_FOV = 90  # Degrees
+LIDAR_RANGE = 200  # Detection range in units
+LIDAR_FOV = 90  # Field of view in degrees
+LIDAR_MEASUREMENT_NOISE = [1.0, 0.1]  # [distance_noise, angle_noise]
 
 # Obstacles
 OBSTACLES = [(10, 10), (300, 300), (400, 500), (700, 100), (500, 300)]
+
+# EKF settings
+# EKF_PROCESS_NOISE = [0.0] * EKF_STATE_DIM  # Process noise for all states
+# EKF_MEASUREMENT_NOISE = [1.0] * EKF_MEAS_DIM  # Measurement noise for all measurements
 
 # Initialize Pygame
 pygame.init()
