@@ -1,6 +1,4 @@
 import numpy as np
-import math
-import sympy
 import tensorflow as tf
 from utils.ekf import find_correspondence_with_mahalanobis_flat
 from models.ekf import ExtendedKalmanFilter
@@ -167,7 +165,7 @@ def update(ekf: ExtendedKalmanFilter, player_x, player_y, player_angle, lidar_de
 
   # Match detections with state using Mahalanobis distance
   correspondences, unmatched = find_correspondence_with_mahalanobis_flat(
-    obstacle_coordinates, ekf.get_state()[3:], offset_left(ekf.get_covariance()[3:, :], 3)
+    obstacle_coordinates, ekf.get_state()[3:], offset_left(ekf.get_covariance()[3:, :], 3), 20
   )
 
   # Update state with correspondences

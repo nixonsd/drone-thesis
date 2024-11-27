@@ -20,7 +20,7 @@ PLAYER_PROCESS_NOISE = [0.5, 0.5, 0.05]  # [x_noise, y_noise, angle_noise]
 # LiDAR settings
 LIDAR_RANGE = 200  # Detection range in units
 LIDAR_FOV = 90  # Field of view in degrees
-LIDAR_MEASUREMENT_NOISE = [1.0, 0.1]  # [distance_noise, angle_noise]
+LIDAR_MEASUREMENT_NOISE = [0.001, 0.0001]  # [distance_noise, angle_noise]
 
 # Obstacles
 OBSTACLES = [(10, 10), (300, 300), (400, 500), (700, 100), (500, 300)]

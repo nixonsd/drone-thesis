@@ -3,6 +3,19 @@ import pygame
 import math
 from settings import SCREEN, PLAYER_SIZE, WHITE, BLUE, RED, GREEN
 
+def draw_text(screen, text, position, font_size=24, color=(0, 0, 0)):
+  """
+  Draw text on the Pygame screen.
+  :param screen: Pygame screen surface.
+  :param text: Text to display.
+  :param position: Tuple (x, y) for the text position.
+  :param font_size: Size of the font.
+  :param color: Color of the text (default is black).
+  """
+  font = pygame.font.Font(None, font_size)
+  text_surface = font.render(text, True, color)
+  screen.blit(text_surface, position)
+
 def draw_uncertainty_circles(state, covariance, scale=10):
   """
   Draw circles around the robot and obstacles to represent uncertainty.
