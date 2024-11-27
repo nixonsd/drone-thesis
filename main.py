@@ -7,22 +7,30 @@ from models.ekf import ExtendedKalmanFilter
 from utils.slam import measurement_model, motion_model, predict, update
 from utils.noise import add_noise
 
+# Player actual position (ground truth)
+actual_player_x, actual_player_y, actual_player_angle = 50, 50, 0
+
+# Player estimated position
+estimated_player_x, estimated_player_y, estimated_player_angle = 50, 50, 0
+
 # EKF setup
 initial_state_dim = 3  # [player_x, player_y, player_angle]
 ekf = ExtendedKalmanFilter(state_dim=initial_state_dim, meas_dim=initial_state_dim)
-ekf.set_process_noise(np.diag([0.1] * initial_state_dim))  # Process noise
-ekf.set_measurement_noise(np.diag([1.0] * initial_state_dim))  # Measurement noise
+ekf.set_process_noise(np.eye(3) * PLAYER_PROCESS_NOISE)  # Process noise
+ekf.set_measurement_noise(np.eye(3) * [*ENCODER_MEASUREMENT_NOISE, IMU_NOISE[2]])  # Measurement noise
 
 # Initialize EKF state to unknown (zeros)
-ekf.x = np.zeros((initial_state_dim, 1))
-
-# Player actual position (ground truth)
-actual_player_x, actual_player_y, actual_player_angle = 50, 50, 0
+ekf.x = np.reshape([
+  estimated_player_x,
+  estimated_player_y,
+  estimated_player_angle
+], (3, 1))
 
 # Pygame setup
 pygame.init()
 clock = pygame.time.Clock()
 running = True
+dt = 1 / FPS
 
 # Game loop
 while running:
@@ -49,28 +57,38 @@ while running:
   # Normalize angle
   actual_player_angle = (actual_player_angle + np.pi) % (2 * np.pi) - np.pi
 
-  # Add noise to the ground truth to simulate noisy measurements
-  noisy_player_x = add_noise(actual_player_x, 3)
-  noisy_player_y = add_noise(actual_player_y, 3)
-  noisy_player_angle = add_noise(actual_player_angle, 0.1)
-
   # Simulate noisy LiDAR detections
   lidar_detections = simulate_lidar(
     actual_player_x, actual_player_y, actual_player_angle, OBSTACLES, LIDAR_RANGE, LIDAR_FOV
   )
-  noisy_lidar_detections = [(add_noise(r, 0.1), theta) for r, theta in lidar_detections]
+  # noisy_lidar_detections = [(add_noise(r, 0.1), theta) for r, theta in lidar_detections]
+  noisy_lidar_detections = [(add_noise(r, LIDAR_MEASUREMENT_NOISE[0]), theta) for r, theta in lidar_detections]
 
   # SLAM Prediction Step: Predict player's position using control input
-  dx = noisy_player_x - prev_x
-  dy = noisy_player_y - prev_y
-  dtheta = noisy_player_angle - prev_angle
+  dx = actual_player_x - prev_x
+  dy = actual_player_y - prev_y
+  dtheta = actual_player_angle - prev_angle
+  
   control_input = [dx, dy, dtheta]
   predict(ekf, motion_model, control_input)
+  
+  # Calculate player's speed (with respect to sensors, noise should be presented)
+  x_speed = add_noise((actual_player_x - prev_x) / dt, sigma=ENCODER_MEASUREMENT_NOISE[0])
+  y_speed = add_noise((actual_player_y - prev_y) / dt, sigma=ENCODER_MEASUREMENT_NOISE[1])
+  # Calculate angular speed with added noise and normalize the angle
+  theta_speed = add_noise((actual_player_angle - prev_angle) / dt, sigma=IMU_NOISE[2])
+  theta_speed = (theta_speed + np.pi) % (2 * np.pi) - np.pi  # Normalize to [-π, π]
 
+  # Pack measurements together
+  measurements = [
+    x_speed,
+    y_speed,
+    theta_speed,
+    *np.ravel(noisy_lidar_detections)
+  ]
+  
   # SLAM Update Step: Refine player's position using noisy measurements
-  correspondences, unmatched = update(
-    ekf, noisy_player_x, noisy_player_y, noisy_player_angle, noisy_lidar_detections, measurement_model
-  )
+  update(ekf, measurements, measurement_model, dt, DETECTION_THRESHOLD)
 
   # Extract estimated player position from EKF state
   estimated_player_x, estimated_player_y, estimated_player_angle = ekf.get_state().flatten()[:3]

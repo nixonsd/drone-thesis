@@ -117,7 +117,7 @@ class ExtendedKalmanFilter:
     
     def predict(self, motion_model, control_input):
         """
-        EKF Prediction step using TensorFlow for Jacobian computation.
+        EKF Prediction
         :param motion_model: Nonlinear state transition function.
         :param control_input: Control input vector.
         """
@@ -137,11 +137,11 @@ class ExtendedKalmanFilter:
         :param measurement_model: Nonlinear measurement function.
         """
         # Compute the predicted measurement
-        z_pred = measurement_model(self.x)
+        z_pred = measurement_model(z)
 
         # Compute the Jacobian using the finite difference method
         self.H = self.compute_jacobian(measurement_model, self.x)
-
+        
         # Compute the innovation (residual)
         y = z - z_pred
 
