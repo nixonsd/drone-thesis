@@ -1,8 +1,8 @@
 import pygame
 
 # Screen settings
-WIDTH, HEIGHT = 800, 600
-FPS = 60
+WIDTH, HEIGHT = 800, 600  # Simulates a 20x15m area (scale: 1 unit = 0.025 meters)
+FPS = 60  # 60 frames per second, typical for smooth simulations
 
 # Colors
 WHITE = (255, 255, 255)
@@ -11,34 +11,37 @@ BLUE = (0, 0, 255)
 RED = (255, 0, 0)
 GREEN = (0, 255, 0)
 
+# Obstacles
+OBSTACLES = [
+    (150, 150), (300, 300), (600, 450), (700, 200)
+]  # Distributed across the map
+
 # Player settings
-PLAYER_SIZE = 40
-PLAYER_SPEED = 5  # Units per frame
-ROTATION_SPEED = 5  # Degrees per frame
-PLAYER_PROCESS_NOISE = [0.01, 0.01, 0.001]  # [x_noise, y_noise, angle_noise]
+PLAYER_SIZE = 40  # Approximately 1 meter in diameter (scaled)
+PLAYER_SPEED = 3  # 3 meters per second (scaled units per frame)
+ROTATION_SPEED = 2  # 2 degrees per frame, equivalent to 120 degrees/second
+PLAYER_PROCESS_NOISE = [0.05, 0.05, 0.0005]  # Reduced noise for more precise control
 
 # LiDAR settings
-LIDAR_RANGE = 200  # Detection range in units
-LIDAR_FOV = 90  # Field of view in degrees
-LIDAR_PROCESS_NOISE = [0, 0]  # [distance_noise, angle_noise]
-LIDAR_MEASUREMENT_NOISE = [0.1, 0.01]  # [distance_noise, angle_noise]
+LIDAR_RANGE = 250  # Detection range of 500 units (~12.5 meters)
+LIDAR_FOV = 270  # Field of view increased to match common LiDARs
+LIDAR_PROCESS_NOISE = [0.005, 0.0001]  # Reduced process noise
+LIDAR_MEASUREMENT_NOISE = [0.05, 0.005]  # More realistic noise for distance and angle
 
 # Wheel encoder settings
-ENCODER_MEASUREMENT_NOISE = [2, 2] # [x_speed, y_speed]
+ENCODER_MEASUREMENT_NOISE = [0.1, 0.1]  # Smaller noise for high-resolution encoders
 
 # Detection Threshold
-DETECTION_THRESHOLD = 150
+DETECTION_THRESHOLD = 300  # Higher threshold for obstacle proximity
 
-# IMU
-IMU_NOISE = [0, 0, 0.45]
+# IMU settings
+IMU_NOISE = [0.005, 0.005, 0.05]  # Reduced noise for modern IMUs
 
-# Obstacles
-# OBSTACLES = [(300, 300), (400, 500), (700, 100), (500, 300)]
-OBSTACLES = [(664, 397), (579, 546), (236, 37), (204, 393), (524, 112), (544, -114), (166, 747), (634, -32), (356, 459), (604, 361)]
 
-# EKF settings
-# EKF_PROCESS_NOISE = [0.0] * EKF_STATE_DIM  # Process noise for all states
-# EKF_MEASUREMENT_NOISE = [1.0] * EKF_MEAS_DIM  # Measurement noise for all measurements
+# EKF settings (if using an Extended Kalman Filter)
+EKF_PROCESS_NOISE = [0.01, 0.01, 0.0001]  # Lower values for x, y, and angle noise
+
+EKF_MEASUREMENT_NOISE = [0.05, 0.05, 0.001]  # Lower measurement noise for x, y, and angle
 
 # Initialize Pygame
 pygame.init()

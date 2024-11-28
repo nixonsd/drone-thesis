@@ -1,10 +1,10 @@
 import pygame
 import numpy as np
 from settings import *
-from utils.render import draw_player, draw_obstacles, draw_lidar_detections, draw_text, draw_uncertainty_circles
+from utils.render import draw_estimated_positions, draw_player, draw_obstacles, draw_lidar_detections, draw_text, draw_uncertainty_ellipses
 from models.lidar_simulator import simulate_lidar
 from models.ekf import ExtendedKalmanFilter
-from utils.slam import measurement_model, motion_model, predict, update
+from utils.slam import predict, update
 from utils.noise import add_noise
 
 # Player actual position (ground truth)
@@ -62,21 +62,34 @@ while running:
     actual_player_x, actual_player_y, actual_player_angle, OBSTACLES, LIDAR_RANGE, LIDAR_FOV
   )
   # noisy_lidar_detections = [(add_noise(r, 0.1), theta) for r, theta in lidar_detections]
-  noisy_lidar_detections = [(add_noise(r, LIDAR_MEASUREMENT_NOISE[0]), theta) for r, theta in lidar_detections]
-
+  noisy_lidar_detections = [(add_noise(r, LIDAR_MEASUREMENT_NOISE[0]), add_noise(theta, LIDAR_MEASUREMENT_NOISE[1])) for r, theta in lidar_detections]
+  
   # SLAM Prediction Step: Predict player's position using control input
   dx = actual_player_x - prev_x
   dy = actual_player_y - prev_y
   dtheta = actual_player_angle - prev_angle
+
+  # Normalize angular difference to [-pi, pi]
+  dtheta = (dtheta + np.pi) % (2 * np.pi) - np.pi
+
+  # Define a reference unit vector (e.g., forward direction)
+  ref_vector = np.array([np.cos(prev_angle), np.sin(prev_angle)])
+  velocity_vector = np.array([dx, dy])
+  v_linear = np.dot(velocity_vector, ref_vector) / dt
   
-  control_input = [dx, dy, dtheta]
-  predict(ekf, motion_model, control_input)
+  v_angular = (dtheta / dt + np.pi) % (2 * np.pi) - np.pi             # Angular velocity (change in angle per time)
+
+  # Create control input
+  control_input = [v_linear, v_angular]
+
+  # # Perform prediction
+  # predict(ekf, control_input, dt)
   
   # Calculate player's speed (with respect to sensors, noise should be presented)
-  x_speed = add_noise((actual_player_x - prev_x) / dt, sigma=ENCODER_MEASUREMENT_NOISE[0])
-  y_speed = add_noise((actual_player_y - prev_y) / dt, sigma=ENCODER_MEASUREMENT_NOISE[1])
+  x_speed = add_noise(dx / dt, sigma=ENCODER_MEASUREMENT_NOISE[0])
+  y_speed = add_noise(dy / dt, sigma=ENCODER_MEASUREMENT_NOISE[1])
   # Calculate angular speed with added noise and normalize the angle
-  theta_speed = add_noise((actual_player_angle - prev_angle) / dt, sigma=IMU_NOISE[2])
+  theta_speed = add_noise(v_angular, sigma=IMU_NOISE[2])
   theta_speed = (theta_speed + np.pi) % (2 * np.pi) - np.pi  # Normalize to [-π, π]
 
   # Pack measurements together
@@ -88,8 +101,9 @@ while running:
   ]
   
   # SLAM Update Step: Refine player's position using noisy measurements
-  update(ekf, measurements, measurement_model, dt, DETECTION_THRESHOLD)
+  update(ekf, control_input, measurements, dt, DETECTION_THRESHOLD)
 
+  print(ekf.get_state())
   # Extract estimated player position from EKF state
   estimated_player_x, estimated_player_y, estimated_player_angle = ekf.get_state().flatten()[:3]
 
@@ -101,10 +115,10 @@ while running:
   
   # Draw obstacles and uncertainty circles
   draw_obstacles(OBSTACLES)
-  draw_uncertainty_circles(ekf.get_state(), ekf.get_covariance())
+  draw_estimated_positions(ekf.get_state(), ekf.get_covariance())
 
   # Draw LiDAR detections
-  draw_lidar_detections(actual_player_x, actual_player_y, actual_player_angle, noisy_lidar_detections)
+  draw_lidar_detections(estimated_player_x, estimated_player_y, estimated_player_angle, noisy_lidar_detections)
 
   # Display actual, noisy, and estimated positions
   actual_text = f"Actual: x={actual_player_x:.2f}, y={actual_player_y:.2f}, angle={np.degrees(actual_player_angle):.2f}"

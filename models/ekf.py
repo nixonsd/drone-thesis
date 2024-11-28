@@ -15,7 +15,7 @@ class ExtendedKalmanFilter:
         self.x = initial_state if initial_state is not None else np.zeros((state_dim, 1))
 
         # Initialize covariance matrices
-        self.P = np.eye(state_dim)  # State covariance matrix
+        self.P = np.eye(state_dim) # State covariance matrix
         self.Q = np.eye(state_dim)  # Process noise covariance
         self.R = np.eye(meas_dim)  # Measurement noise covariance
 
@@ -115,20 +115,35 @@ class ExtendedKalmanFilter:
     #     # Compute the predicted covariance
     #     self.P = self.F @ self.P @ self.F.T + self.Q
     
-    def predict(self, motion_model, control_input):
+    def predict(self, motion_model):
         """
         EKF Prediction
         :param motion_model: Nonlinear state transition function.
         :param control_input: Control input vector.
         """
         # Compute the predicted state
-        self.x = motion_model(self.x, control_input)
+        self.x = motion_model(self.x)
     
         # Compute the Jacobian of the motion model
-        self.F = self.compute_jacobian(lambda state: motion_model(state, control_input), self.x)
+        self.F = self.compute_jacobian(motion_model, self.x)
 
         # Update the covariance
         self.P = self.F @ self.P @ self.F.T + self.Q
+        
+        # Add small positive value to diagonal for numerical stability
+        self.P += np.eye(self.P.shape[0]) * 1e-6  # Add a small positive value to stabilize
+    
+        # Symmetrize the covariance matrix to handle numerical instability
+        self.P = (self.P + self.P.T) / 2
+        
+        # Symmetrize
+        # self.P = (self.P + self.P.T) / 2
+        
+        # # Stabilize the covariance matrix
+        # self.P = (self.P + self.P.T) / 2  # Symmetrize
+        # eigenvalues = np.linalg.eigvals(self.P)
+        # if np.any(eigenvalues < 0):
+        #     self.P += np.eye(self.P.shape[0]) * (1e-6 - np.min(eigenvalues))
 
     def update(self, z, measurement_model):
         """
@@ -136,17 +151,18 @@ class ExtendedKalmanFilter:
         :param z: Measurement vector.
         :param measurement_model: Nonlinear measurement function.
         """
-        # Compute the predicted measurement
-        z_pred = measurement_model(z)
+        # Compute the predicted measurement based on the current state
+        z_pred = measurement_model(self.x)  # Use the current state estimate (self.x)
 
         # Compute the Jacobian using the finite difference method
         self.H = self.compute_jacobian(measurement_model, self.x)
-        
+
         # Compute the innovation (residual)
-        y = z - z_pred
+        y = z - z_pred  # Difference between actual and predicted measurements
 
         # Compute the innovation covariance
         S = self.H @ self.P @ self.H.T + self.R
+        S += np.eye(S.shape[0]) * 1e-6  # Add a small value to diagonal to stabilize inversion
 
         # Compute the Kalman gain
         K = self.P @ self.H.T @ np.linalg.inv(S)
@@ -156,6 +172,54 @@ class ExtendedKalmanFilter:
 
         # Update the covariance estimate
         self.P = (np.eye(self.state_dim) - K @ self.H) @ self.P
+
+        self.P += np.eye(self.P.shape[0]) * 1e-6  # Add a small positive value to stabilize
+
+        # Symmetrize the covariance matrix to handle numerical instability
+        self.P = (self.P + self.P.T) / 2
+        
+        print("Initial self.x shape:", self.x.shape)
+        print("K shape:", K.shape)
+        print("y shape:", y.shape)
+        print("Updated self.x shape:", (self.x + K @ y).shape)
+    
+    # def update(self, z, measurement_model):
+    #     """
+    #     Update step using a finite difference Jacobian for measurement updates.
+    #     :param z: Measurement vector.
+    #     :param measurement_model: Nonlinear measurement function.
+    #     """
+    #     # Compute the predicted measurement
+    #     z_pred = measurement_model(z)
+
+    #     # Compute the Jacobian using the finite difference method
+    #     self.H = self.compute_jacobian(measurement_model, self.x)
+        
+    #     # Compute the innovation (residual)
+    #     y = z - z_pred
+
+    #     # Compute the innovation covariance
+    #     S = self.H @ self.P @ self.H.T + self.R
+        
+    #     S += np.eye(S.shape[0]) * 1e-6  # Add a small value to diagonal to stabilize inversion
+
+    #     # Compute the Kalman gain
+    #     K = self.P @ self.H.T @ np.linalg.inv(S)
+
+    #     # Update the state estimate
+    #     self.x = self.x + K @ y
+
+    #     # Update the covariance estimate
+    #     self.P = (np.eye(self.state_dim) - K @ self.H) @ self.P
+                
+    #     # # Symmetrize
+    #     # self.P = (self.P + self.P.T) / 2
+        
+    #     # # Stabilize the covariance matrix
+    #     # self.P = (self.P + self.P.T) / 2  # Symmetrize
+    #     # eigenvalues = np.linalg.eigvals(self.P)
+    #     # if np.any(eigenvalues < 0):
+    #     #     self.P += np.eye(self.P.shape[0]) * (1e-6 - np.min(eigenvalues))
     
     # def update(self, z, h):
     #     """
@@ -214,6 +278,15 @@ class ExtendedKalmanFilter:
             self.meas_dim += initial_value.shape[0]
             self.R = np.pad(self.R, ((0, initial_value.shape[0]), (0, initial_value.shape[0])), mode='constant', constant_values=0)
             np.fill_diagonal(self.R[-initial_value.shape[0]:, -initial_value.shape[0]:], measurement_noise)
+            
+        # # Symmetrize
+        # self.P = (self.P + self.P.T) / 2
+        
+        # # Stabilize the covariance matrix
+        # self.P = (self.P + self.P.T) / 2  # Symmetrize
+        # eigenvalues = np.linalg.eigvals(self.P)
+        # if np.any(eigenvalues < 0):
+        #     self.P += np.eye(self.P.shape[0]) * (1e-6 - np.min(eigenvalues))
 
     def set_process_noise(self, Q):
         """
