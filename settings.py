@@ -39,7 +39,7 @@ IMU_NOISE = [0.005, 0.005, 0.05]  # Reduced noise for modern IMUs
 
 
 # EKF settings (if using an Extended Kalman Filter)
-EKF_PROCESS_NOISE = [0.01, 0.01, 0.0001]  # Lower values for x, y, and angle noise
+EKF_PROCESS_NOISE = [0.05, 0.05, 0.001]  # Lower values for x, y, and angle noise
 
 EKF_MEASUREMENT_NOISE = [0.05, 0.05, 0.001]  # Lower measurement noise for x, y, and angle
 

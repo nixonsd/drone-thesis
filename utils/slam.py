@@ -5,6 +5,8 @@ from utils.ekf import find_correspondence_with_mahalanobis_flat
 from models.ekf import ExtendedKalmanFilter
 from utils.lidar import process_lidar_detections
 
+prev_measurements = []
+
 def offset_left(matrix, offset):
   """
   Offset a matrix to the left by a specified number of columns.
@@ -115,8 +117,8 @@ def motion_model(state, control_input, dt):
     # Update the robot's position and orientation using the motion model
     theta_next = theta + v_angular * dt
     theta_next = (theta_next + np.pi) % (2 * np.pi) - np.pi  # Normalize to [-π, π]
-    x_next = x + v_linear * np.cos(theta_next) * dt
-    y_next = y + v_linear * np.sin(theta_next) * dt
+    x_next = x + v_linear * np.cos(theta) * dt
+    y_next = y + v_linear * np.sin(theta) * dt
 
     # Copy and update the state
     updated_state = [x_next, y_next, theta_next]
@@ -441,8 +443,8 @@ def update(ekf: ExtendedKalmanFilter, control_input, measurements, dt, threshold
     num_obstacles = (len(measurements) - 3) // 2
     for i in range(num_obstacles):
         r, theta = measurements[3 + 2 * i], measurements[4 + 2 * i]  # Angle to obstacle (relative to robot)
-        obs_x = z[0] + r * np.cos(z[2] + theta)
-        obs_y = z[1] + r * np.sin(z[2] + theta)
+        obs_x = z_pred[0] + r * np.cos(z_pred[2] + theta)
+        obs_y = z_pred[1] + r * np.sin(z_pred[2] + theta)
         obstacle_coordinates.extend([obs_x, obs_y])
 
     # Match obstacle detections with known obstacles in the state

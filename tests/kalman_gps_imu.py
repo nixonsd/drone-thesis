@@ -60,36 +60,49 @@ def calculate_mse(real, predicted):
 
 
 def main():
+    # Noises
+    sigma_gps = 0.4
+    sigma_imu = 0.5
+    
     # Time steps and true positions
     x = np.arange(0, 20, 0.5)
     y_real, v_real, a_real = linear_function(x)  # Ground truth: position, velocity, acceleration
-    y_noisy = add_noise(y_real, 3)  # GPS position with noise
-    a_noisy = add_noise(a_real, 0.01)  # IMU acceleration with noise
+    y_noisy = add_noise(y_real, sigma_gps)  # GPS position with noise
+    a_noisy = add_noise(a_real, sigma_imu)  # IMU acceleration with noise
 
     # Integrate noisy acceleration to estimate velocity and position
     dt = 0.5  # Time step
     v_estimated = np.cumsum(a_noisy) * dt  # Velocity by integrating acceleration
+    v_estimated_var = np.var(v_estimated)
     y_estimated_imu = np.cumsum(v_estimated) * dt  # Position by integrating velocity
 
     # Kalman filter parameters
-    F = np.array([[1, dt, 0.5 * dt**2], [0, 1, dt], [0, 0, 1]])  # State transition model
-    B = np.array([[0], [0], [0]])  # No control input
-    H = np.array([[1, 0, 0]])  # Observation model: we observe position only (GPS)
-    Q = np.eye(3) * 0.1  # Process noise covariance
-    R = np.array([[25]])  # Measurement noise covariance for GPS
-    x0 = np.array([[0], [0], [0]])  # Initial state: position, velocity, acceleration
-    P0 = np.eye(3)  # Initial state covariance
+    F = np.array([[1, dt], [0, 1]])  # State transition model
+    B = np.array([0, 0]).transpose()  # No control input
+    H = np.array([[1, 0], [0, 1]])
+    Q = np.eye(2) * 0.001  # Process noise covariance
+    R = np.array([[sigma_gps ** 2, 0], [0, v_estimated_var]])  # Measurement noise covariance (R)
+    x0 = np.array([0, 0]).transpose()  # Initial state: position, acceleration
+    P0 = np.eye(2)  # Initial state covariance
 
     # Create Kalman filter instance
     kf = KalmanFilter(F, B, H, Q, R, x0, P0)
 
-    # Apply Kalman filter
+    # Apply Kalman filter with both GPS and IMU data
     y_filtered = []
-    for z_pos in y_noisy:
-        kf.predict(np.array([[0]]))  # No control input
-        filtered_state = kf.update(np.array([[z_pos]]))
-        y_filtered.append(filtered_state[0, 0])  # Save filtered position
 
+    for z_gps, z_imu in zip(y_noisy, v_estimated):
+        # Predict step
+        kf.predict([[0], [0]])
+
+        # Update step
+        z = np.array([[z_gps], [z_imu]])  # Combine GPS and IMU measurements
+        filtered_state = kf.update(z)
+        print(filtered_state)
+        
+        # Append filtered position
+        y_filtered.append(filtered_state[0, 0])  # Position is the first state element
+    
     # Calculate MSE
     mse_position_no_filter = calculate_mse(y_real, y_noisy)
     mse_imu_estimated_position_no_filter = calculate_mse(y_real, y_estimated_imu)

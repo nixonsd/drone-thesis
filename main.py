@@ -4,14 +4,14 @@ from settings import *
 from utils.render import draw_estimated_positions, draw_player, draw_obstacles, draw_lidar_detections, draw_text, draw_uncertainty_ellipses
 from models.lidar_simulator import simulate_lidar
 from models.ekf import ExtendedKalmanFilter
-from utils.slam import predict, update
+from utils.slam import update
 from utils.noise import add_noise
 
 # Player actual position (ground truth)
-actual_player_x, actual_player_y, actual_player_angle = 50, 50, 0
+actual_player_x, actual_player_y, actual_player_angle = 50.0, 50.0, 0.0
 
 # Player estimated position
-estimated_player_x, estimated_player_y, estimated_player_angle = 50, 50, 0
+estimated_player_x, estimated_player_y, estimated_player_angle = 50.0, 50.0, 0.0
 
 # EKF setup
 initial_state_dim = 3  # [player_x, player_y, player_angle]
@@ -30,7 +30,7 @@ ekf.x = np.reshape([
 pygame.init()
 clock = pygame.time.Clock()
 running = True
-dt = 1 / FPS
+dt = 1.0 / FPS
 
 # Game loop
 while running:
@@ -115,7 +115,7 @@ while running:
   
   # Draw obstacles and uncertainty circles
   draw_obstacles(OBSTACLES)
-  draw_estimated_positions(ekf.get_state(), ekf.get_covariance())
+  draw_uncertainty_ellipses(ekf.get_state(), ekf.get_covariance())
 
   # Draw LiDAR detections
   draw_lidar_detections(estimated_player_x, estimated_player_y, estimated_player_angle, noisy_lidar_detections)
